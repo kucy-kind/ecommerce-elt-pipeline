@@ -1,0 +1,128 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: etl_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-etl_db}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    networks:
+      etl_network:
+        ipv4_address: 192.168.200.2
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+
+  minio:
+    image: minio/minio
+    container_name: etl_minio
+    command: server /data --console-address ":9090"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9090:9090"
+    volumes:
+      - minio_data:/data
+    networks:
+      etl_network:
+        ipv4_address: 192.168.200.3
+
+  airflow:
+    build:
+      context: .
+      dockerfile: Dockerfile_airflow   
+    container_name: etl_airflow
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-etl_db}
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: ${AIRFLOW_ADMIN_USER:-admin}:${AIRFLOW_ADMIN_PASSWORD}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./data_generator:/opt/airflow/dags/data_generator
+      - ./etl_dbt/etl:/opt/airflow/dags/etl_dbt/etl
+      - ./scripts:/opt/airflow/dags/scripts
+    ports:
+      - "8080:8080"
+    networks:
+      etl_network:
+        ipv4_address: 192.168.200.4
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow scheduler &
+        exec airflow api-server
+      "
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: etl_metabase
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      MB_DB_TYPE: mysql
+      MB_DB_DBNAME: ${MYSQL_DATABASE:-etl_db}
+      MB_DB_PORT: 3306
+      MB_DB_HOST: mysql
+      MB_DB_USER: root
+      MB_DB_PASS: ${MYSQL_ROOT_PASSWORD}
+    networks:
+      etl_network:
+        ipv4_address: 192.168.200.5
+
+  python-etl:
+    build: .
+    container_name: etl_python
+    restart: unless-stopped
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-etl_db}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_SECURE: "false"
+    volumes:
+      - ./data_generator:/app/data_generator
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+      - ./output:/app/output
+    command: ["bash", "-c", "echo 'Python ETL ready' && tail -f /dev/null"]
+    networks:
+      etl_network:
+        ipv4_address: 192.168.200.6
+
+volumes:
+  mysql_data:
+  minio_data:
+
+networks:
+  etl_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "192.168.200.0/24"
+          gateway: 192.168.200.1

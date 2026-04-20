@@ -1,0 +1,25 @@
+{{
+    config(
+        materialized='table',
+        schema='ads'
+    )
+}}
+
+
+{% set target_month = var('target_date') %}
+
+select
+    '{{target_date}}' as stat_date,
+    daily_sales,
+    daily_orders,
+    active_users,
+    new_users,
+    conversion_rate,
+    refund_count,
+    refund_rate ,
+    health_score,
+    sales_drop_warning,
+    conversion_drop_warning,
+    refund_spike_warning,
+    now() as etl_time
+from {{ref('dws_business_daily_health')}}  d where d.stat_date= '{{target_date}}'

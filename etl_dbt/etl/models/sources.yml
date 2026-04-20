@@ -1,0 +1,25 @@
+version: 2
+
+sources:
+  - name: dwd
+    database: etl_db
+    schema: etl_db
+    tables:
+      - name: users
+        identifier: dwd_users
+      - name: dim_merchants
+        identifier: dwd_dim_merchants
+      - name: dim_products
+        identifier: dwd_dim_products
+      - name: dim_promotions
+        identifier: dwd_dim_promotions
+      - name: orders
+        identifier: dwd_orders
+      - name: user_actions
+        identifier: dwd_user_actions
+      - name: returns
+        identifier: dwd_returns
+      - name: merchant_operations
+        identifier: dwd_merchant_operations
+      - name: data_quality_alerts
+        identifier: dwd_data_quality_alerts

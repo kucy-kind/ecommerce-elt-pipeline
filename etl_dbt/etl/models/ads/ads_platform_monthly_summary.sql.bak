@@ -1,0 +1,205 @@
+{{
+    config(
+        materialized='incremental',
+        unique_key=['stat_month'],
+        schema='ads'
+    )
+}}
+
+-- Receive Airflow passed month start date, format 'YYYY-MM-01'
+{% set target_month = var('target_month') %}
+
+-- =====================================================
+-- 1. Base aggregation: GMV, total orders
+-- =====================================================
+with total as (
+    select
+        '{{ target_month }}' as stat_month,
+        sum(daily_sales) as total_gmv,
+        sum(daily_orders) as total_orders
+    from {{ ref('ads_platform_daily_snapshot') }}
+    where stat_date >= DATE_SUB('{{ target_month }}', INTERVAL 1 MONTH)
+      and stat_date < '{{ target_month }}'
+),
+
+-- =====================================================
+-- 2. Active merchants count
+-- =====================================================
+active_merchants as (
+    select
+        '{{ target_month }}' as stat_month,
+        count(distinct merchant_id) as active_merchants
+    from {{ ref('ads_merchant_monthly_snapshot') }}
+    where stat_month >= DATE_SUB('{{ target_month }}', INTERVAL 1 MONTH)
+      and stat_month < '{{ target_month }}'
+      and order_count > 0
+),
+
+-- =====================================================
+-- 3. Category sales distribution (JSON object)
+-- =====================================================
+category_sales_raw as (
+    select
+        p.category_name,
+        count(distinct o.order_id) as order_cnt,
+        sum(o.order_amount) as gmv
+    from {{ source('dwd', 'orders') }} o
+    left join {{ source('dwd', 'dim_products') }} p on o.product_id = p.product_id
+    where o.order_time >= DATE_SUB('{{ target_month }}', INTERVAL 1 MONTH)
+      and o.order_time < '{{ target_month }}'
+    group by p.category_name
+),
+category_sales_json as (
+    select
+        '{{ target_month }}' as stat_month,
+        json_objectagg(
+            coalesce(category_name, 'Unknown'),
+            json_object('order_cnt', order_cnt, 'gmv', gmv)
+        ) as category_sales
+    from category_sales_raw
+),
+
+-- =====================================================
+-- 4. Promotion effect analysis (by user level)
+-- =====================================================
+-- 4.1 Active promotions during the month
+active_promotions as (
+    select
+        promotion_id,
+        promotion_name,
+        start_time,
+        end_time
+    from {{ source('dwd', 'dim_promotions') }}
+    where promotion_status = 'In Progress'
+      and start_time < '{{ target_month }}'
+      and end_time >= DATE_SUB('{{ target_month }}', INTERVAL 1 MONTH)
+),
+
+-- 4.2 All orders in the month, join user level (default 'Normal')
+all_orders as (
+    select
+        o.order_id,
+        o.order_amount,
+        coalesce(u.user_level, 'Normal') as user_level,
+        o.promotion_id
+    from {{ source('dwd', 'orders') }} o
+    left join {{ ref('dws_user_profile') }} u on o.user_id = u.user_id
+    where o.order_time >= DATE_SUB('{{ target_month }}', INTERVAL 1 MONTH)
+      and o.order_time < '{{ target_month }}'
+),
+
+-- 4.3 Orders with promotions (join specific promotion)
+orders_with_promo as (
+    select
+        o.order_id,
+        o.order_amount,
+        o.user_level,
+        p.promotion_id,
+        p.promotion_name
+    from all_orders o
+    inner join active_promotions p on o.promotion_id = p.promotion_id
+),
+
+-- 4.4 Orders without any promotion (control group)
+orders_without_promo as (
+    select
+        order_id,
+        order_amount,
+        user_level
+    from all_orders
+    where promotion_id is null
+),
+
+-- 4.5 Aggregate promotion orders by promotion and user level
+promo_stats as (
+    select
+        promotion_id,
+        promotion_name,
+        user_level,
+        avg(order_amount) as avg_order_amount_promo,
+        count(distinct order_id) as promo_order_cnt,
+        sum(order_amount) as promo_gmv
+    from orders_with_promo
+    group by promotion_id, promotion_name, user_level
+),
+
+-- 4.6 Aggregate control group orders by user level
+base_stats as (
+    select
+        user_level,
+        avg(order_amount) as avg_order_amount_base,
+        count(distinct order_id) as base_order_cnt,
+        sum(order_amount) as base_gmv
+    from orders_without_promo
+    group by user_level
+),
+
+-- 4.7 Combine and calculate lift for each promotion per user level
+promo_effect_detail as (
+    select
+        ps.promotion_id,
+        ps.promotion_name,
+        ps.user_level,
+        ps.avg_order_amount_promo,
+        ps.promo_order_cnt,
+        ps.promo_gmv,
+        bs.avg_order_amount_base,
+        bs.base_order_cnt,
+        bs.base_gmv,
+        -- Lift = (promo avg order value - base avg order value) / base avg order value
+        case
+            when bs.avg_order_amount_base > 0
+            then (ps.avg_order_amount_promo - bs.avg_order_amount_base) / bs.avg_order_amount_base
+            else null
+        end as lift
+    from promo_stats ps
+    left join base_stats bs on ps.user_level = bs.user_level
+),
+
+-- 4.8 Organize promotion effects into JSON object per promotion
+-- 先按促销生成 JSON 对象（每个促销一个 JSON）
+promo_json_per_promo as (
+    select
+        promotion_id,
+        json_object(
+            'promotion_name', max(promotion_name),  -- promotion_name 在组内相同，用 max 聚合即可
+            'effects', json_objectagg(
+                user_level,
+                json_object(
+                    'avg_order_amount_promo', round(avg_order_amount_promo, 2),
+                    'avg_order_amount_base', round(avg_order_amount_base, 2),
+                    'lift', round(lift, 4),
+                    'promo_order_cnt', promo_order_cnt,
+                    'base_order_cnt', base_order_cnt,
+                    'promo_gmv', round(promo_gmv, 2),
+                    'base_gmv', round(base_gmv, 2)
+                )
+            )
+        ) as promo_json
+    from promo_effect_detail
+    group by promotion_id
+),
+
+-- 再聚合所有促销为一个 JSON 对象
+promo_effect_json as (
+    select
+        '{{ target_month }}' as stat_month,
+        json_objectagg(promotion_id, promo_json) as promotion_effect
+    from promo_json_per_promo
+)
+
+-- =====================================================
+-- 5. Final output
+-- =====================================================
+select
+    '{{ target_month }}' as stat_month,
+    t.total_gmv,
+    t.total_orders,
+    a.active_merchants,
+    coalesce(cs.category_sales, '{}') as category_sales,
+    coalesce(pe.promotion_effect, '{}') as promotion_effect,
+    now() as etl_time
+from total t
+left join active_merchants a on t.stat_month = a.stat_month
+left join category_sales_json cs on t.stat_month = cs.stat_month
+left join promo_effect_json pe on t.stat_month = pe.stat_month

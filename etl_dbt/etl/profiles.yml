@@ -1,0 +1,11 @@
+etl:
+  target: dev
+  outputs:
+    dev:
+      type: mysql
+      server: mysql
+      port: 3306
+      schema: etl_db
+      username: root
+      password: rootpassword
+      driver: MySQLdb
