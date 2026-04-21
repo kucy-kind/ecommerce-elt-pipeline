@@ -106,7 +106,7 @@ docker-compose up -d
 ### 7. 触发数据管道
 1.  登录 Airflow。
 2.  找到 DAG：`ecommerce_elt_pipeline`。
-3.  点击播放按钮 ▶️ 手动触发一次。
+3.  点击播放按钮手动触发一次。
 4.  等待 DAG 运行结束（所有任务变绿）。
 
 ##  数据分层设计
