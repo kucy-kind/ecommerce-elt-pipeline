@@ -147,6 +147,7 @@ docker-compose up -d
 **月表：**[平台月表](http://192.168.160.129:3000/public/dashboard/12270b67-87f8-4ebc-9a21-5059dd4bd804?date=2026-04-01)
 **年表：**[平台年表](http://192.168.160.129:3000/public/dashboard/21884283-292a-4b18-aba2-59de3e2c7794?date=2026-01-01)
 # 项目结构
+```bash
 ├── airflow/
 │ ├── dags/ # Airflow DAG 定义文件
 │ ├── logs/ # 运行时日志（不上传 Git）
@@ -166,4 +167,5 @@ docker-compose up -d
 ├── .env.example # 环境变量配置模板（需复制为 .env 并填写真实值）
 ├── .gitignore # Git 忽略规则（排除敏感文件与运行时目录）
 └── README.md # 项目说明文档（本文件）
+```
 注意项目数据流开始生成时，需要先运行一次data_init.py脚本，保证数据库中存有最基础的一些如（少量用户、少量商家、少量活动等）之后就不再需要运行这个脚本了
