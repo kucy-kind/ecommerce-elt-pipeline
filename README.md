@@ -146,24 +146,24 @@ docker-compose up -d
 **日表：**[平台日报](http://192.168.160.129:3000/public/dashboard/c10e84d4-83f2-4b74-bd65-493e95862cfc?date=2026-04-1)
 **月表：**[平台月表](http://192.168.160.129:3000/public/dashboard/12270b67-87f8-4ebc-9a21-5059dd4bd804?date=2026-04-01)
 **年表：**[平台年表](http://192.168.160.129:3000/public/dashboard/21884283-292a-4b18-aba2-59de3e2c7794?date=2026-01-01)
-.  
-├── airflow/  
-│ ├── dags/ # Airflow DAG 定义文件  
-│ ├── logs/ # 运行时日志
-│ └── plugins/ # 自定义插件  
-├── dbt/ # dbt 项目根目录  （etl_dbt/etl)
-│ ├── models/ # SQL 模型（分层）  
-│ └── dbt_project.yml # dbt 配置文件
-├── data_generator/ # 生成最基础的数据（如少量用户、商家）
-│ ├── data_init.py # 生成一些基础数据
-├── scripts/ # Python ETL 清洗脚本  
-│ ├── data_generator/ # Faker 数据生成脚本  
-│ └──  clean/ # 里面的存放了ods -> dwd的python清洗脚本
-├── docker-compose.yml # 服务编排定义  
-├── Dockerfile_airflow # Airflow 镜像定制  
-├── Dockerfile # python 镜像定制 
-├── requirements.txt # python 安装的库 
-├── .env.example # 环境变量模板  
-├── .gitignore # Git 忽略规则  
-└── README.md # 本文件
+# 项目结构
+├── airflow/
+│ ├── dags/ # Airflow DAG 定义文件
+│ ├── logs/ # 运行时日志（不上传 Git）
+│ └── plugins/ # 自定义 Airflow 插件
+├── dbt/ # dbt 项目根目录（对应 etl_dbt/etl）
+│ ├── models/ # SQL 模型（分层：dwd/dws/ads）
+│ └── dbt_project.yml # dbt 项目配置文件
+├── data_generator/ # 基础数据初始化模块
+│ └── data_init.py # 生成少量用户、商家等静态维度数据
+├── scripts/ # Python ETL 脚本集合
+│ ├── data_generator/ # Faker 仿真数据生成器（按天生成 ODS 文件）
+│ └── clean/ # ODS → DWD 层数据清洗脚本
+├── docker-compose.yml # Docker 服务编排定义（MySQL、MinIO、Airflow、Metabase 等）
+├── Dockerfile_airflow # Airflow 镜像定制文件
+├── Dockerfile # Python 运行环境镜像定制
+├── requirements.txt # Python 项目依赖库清单
+├── .env.example # 环境变量配置模板（需复制为 .env 并填写真实值）
+├── .gitignore # Git 忽略规则（排除敏感文件与运行时目录）
+└── README.md # 项目说明文档（本文件）
 注意项目数据流开始生成时，需要先运行一次data_init.py脚本，保证数据库中存有最基础的一些如（少量用户、少量商家、少量活动等）之后就不再需要运行这个脚本了
